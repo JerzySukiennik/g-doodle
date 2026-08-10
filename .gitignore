@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.bin
+*.npz
+*.pt
+*.onnx
+checkpoints/
+corpus/
+*.svg
+!Design/*.svg
+.DS_Store
