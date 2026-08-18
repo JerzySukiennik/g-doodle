@@ -170,14 +170,26 @@ def main():
 
         if (step + 1) % args.save_every == 0 or step + 1 == args.steps:
             path = os.path.join(args.out, 'g-doodle.pt')
-            torch.save({
+            blob = {
                 'model': raw_model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'config': config.__dict__,
                 'categories': meta['categories'],
                 'step': step + 1,
                 'lr_total': lr_total,
-            }, path)
+            }
+            # Write to a temp file and rename, never over the checkpoint itself.
+            # Saving in place means the only copy is a half-written file for as
+            # long as the write takes, and G-Images lost 8h11m of training to
+            # exactly that window on 2026-08-09: a Kaggle session killed
+            # mid-write left 412 MB of a 1.57 GB file. Not 'most of the weights'
+            # either — torch orders storages on disk by key rather than by
+            # section, so every surviving storage was optimizer state and not one
+            # of the weight tensors. rename() is atomic, so g-doodle.pt is always
+            # either the previous complete checkpoint or the new one.
+            tmp = path + '.tmp'
+            torch.save(blob, tmp)
+            os.replace(tmp, path)
             print(f'  saved {path} at step {step + 1}', flush=True)
 
 
