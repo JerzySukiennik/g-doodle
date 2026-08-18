@@ -44,7 +44,12 @@ os.makedirs(OUT, exist_ok=True)
 
 # ------------------------------------------------------------------- data --
 corpus = None
-for candidate in glob.glob("/kaggle/input/*/meta.json") + glob.glob("/kaggle/input/*/*/meta.json"):
+# Recursive, because Kaggle's mount depth is not fixed: a Dataset lands at
+# /kaggle/input/<slug>/, while a notebook attached through kernel_sources lands
+# at /kaggle/input/notebooks/<owner>/<slug>/ — two levels deeper than the old
+# pattern reached. Attaching the prep notebook directly saves pushing 800 MB
+# down a home connection and back up again as a Dataset.
+for candidate in sorted(glob.glob("/kaggle/input/**/meta.json", recursive=True)):
     corpus = os.path.dirname(candidate)
     break
 if corpus is None:
@@ -53,7 +58,7 @@ print(f"corpus: {corpus}")
 
 # ------------------------------------------------------------ resume, if any --
 resume = None
-for candidate in glob.glob("/kaggle/input/*/g-doodle.pt") + glob.glob("/kaggle/input/*/*/g-doodle.pt"):
+for candidate in sorted(glob.glob("/kaggle/input/**/g-doodle.pt", recursive=True)):
     resume = candidate
     break
 if resume:
