@@ -33,6 +33,7 @@ class DoodleConfig:
     block_size: int = 512      # ~250 pen points, longer than any QuickDraw sketch
     n_layer: int = 10
     n_head: int = 6
+    n_kv_head: int = 2         # grouped-query attention: 3 query heads per KV head
     n_embd: int = 384          # head_dim = 64
     ffn_hidden: int = 1024     # ~8/3 * n_embd, rounded to a multiple of 64
     rope_theta: float = 10000.0
@@ -112,22 +113,36 @@ class CausalSelfAttention(nn.Module):
     def __init__(self, config: DoodleConfig, layer_idx: int):
         super().__init__()
         assert config.n_embd % config.n_head == 0
+        assert config.n_head % config.n_kv_head == 0
         self.n_head = config.n_head
+        self.n_kv_head = config.n_kv_head
+        self.n_rep = config.n_head // config.n_kv_head
         self.head_dim = config.n_embd // config.n_head
         self.layer_idx = layer_idx
         self.dropout = config.dropout
 
-        self.qkv = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
+        # Grouped-query attention: full-width queries, narrow keys and values.
+        # The browser, not the GPU, is what forces this. onnxruntime-web
+        # materializes present_k/present_v as fresh buffers every step, so the
+        # per-token cost grows with what is cached — measured at 65 ms/point
+        # rising to 92 ms by point 40, which put a 400-token drawing at ~27 s
+        # against a 2-5 s target. Two KV heads instead of six cut that traffic
+        # threefold. Watching it draw IS the feature, so this is not a
+        # micro-optimization; and after training the same change would cost the
+        # entire training run, which is why it lands before the first step.
+        kv_width = config.n_kv_head * self.head_dim
+        self.qkv = nn.Linear(config.n_embd, config.n_embd + 2 * kv_width, bias=False)
+        self.kv_width = kv_width
         self.proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
         self.resid_drop = nn.Dropout(config.dropout)
 
     def forward(self, x, cos, sin, kv=None):
         B, T, C = x.shape
 
-        q, k, v = self.qkv(x).split(C, dim=2)
+        q, k, v = self.qkv(x).split([C, self.kv_width, self.kv_width], dim=2)
         q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
-        k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
-        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.n_kv_head, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.n_kv_head, self.head_dim).transpose(1, 2)
 
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
@@ -136,6 +151,11 @@ class CausalSelfAttention(nn.Module):
             k, v = kv.append(self.layer_idx, k, v)
 
         T_k = k.size(2)
+        # Expand only for the attention call, and only after caching: the cache
+        # must hold the narrow tensors or the whole point is lost.
+        if self.n_rep > 1:
+            k = k.repeat_interleave(self.n_rep, dim=1)
+            v = v.repeat_interleave(self.n_rep, dim=1)
         # is_causal assumes queries and keys are the same sequence. During a
         # cached decode step there are T queries against T_k > T keys and every
         # query may legitimately see the whole cache, so the flag would mask the
