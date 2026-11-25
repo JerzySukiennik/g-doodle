@@ -1,0 +1,14 @@
+{
+  "id": "jerzysukiennik/gdoodle-sample",
+  "title": "gdoodle sample",
+  "code_file": "sample_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": false,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": ["jerzysukiennik/gdoodle-train"],
+  "model_sources": []
+}
